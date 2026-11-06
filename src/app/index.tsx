@@ -14,15 +14,17 @@ import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import MapView, { Marker } from "react-native-maps";
 import { Picker } from "@react-native-picker/picker";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../lib/supabase"; // Ajusta el path según tu estructura
 
-export default function FormularioCompleto() {
+export default function FormularioReporte() {
   const [descripcion, setDescripcion] = useState("");
   const [tipo, setTipo] = useState("Tubería en calzada");
   const [gravedad, setGravedad] = useState("Goteo");
+  const [correoCiudadano, setCorreoCiudadano] = useState("");
   const [imagenUri, setImagenUri] = useState<string | null>(null);
+  const [dispositivoId, setDispositivoId] = useState<string>("");
 
-  // Coordenadas iniciales (por defecto si falla el GPS)
+  // Coordenadas iniciales por defecto (CDMX / Referencia)
   const [region, setRegion] = useState({
     latitude: 19.432608,
     longitude: -99.133209,
@@ -34,23 +36,30 @@ export default function FormularioCompleto() {
     latitude: number;
     longitude: number;
   } | null>(null);
-  const [permisoUbicacion, setPermisoUbicacion] = useState(false);
+
+  const [ubicacionConfirmada, setUbicacionConfirmada] = useState(false);
   const [cargando, setCargando] = useState(false);
 
-  // Solicitar ubicación exacta por GPS al abrir
-  async function obtenerUbicacion() {
+  useEffect(() => {
+    // Generar un ID anónimo único para el dispositivo sin depender de paquetes externos
+    const idAnonimo = `dev-${Math.random().toString(36).substring(2, 9)}-${Date.now()}`;
+    setDispositivoId(idAnonimo);
+
+    obtenerUbicacionGPS();
+  }, []);
+
+  async function obtenerUbicacionGPS() {
     let { status } = await Location.requestForegroundPermissionsAsync();
 
     if (status !== "granted") {
-      setPermisoUbicacion(false);
+      setUbicacionConfirmada(false);
       Alert.alert(
-        "Permiso requerido 📍",
-        "No se otorgó permiso de GPS. Puedes seleccionar la ubicación manualmente en el mapa.",
+        "GPS desactivado 📍",
+        "No se pudo acceder al GPS. Puedes pulsar o mover el pin en el mapa para fijar el lugar de la fuga.",
       );
       return;
     }
 
-    setPermisoUbicacion(true);
     let location = await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.High,
     });
@@ -66,26 +75,21 @@ export default function FormularioCompleto() {
       latitudeDelta: 0.005,
       longitudeDelta: 0.005,
     });
+    setUbicacionConfirmada(true);
   }
 
-  useEffect(() => {
-    obtenerUbicacion();
-  }, []);
-
-  // Seleccionar ubicación tocando o moviendo el pin en el mapa
   function seleccionarEnMapa(e: any) {
     const coords = e.nativeEvent.coordinate;
     setCoordenadas(coords);
-    setPermisoUbicacion(true); // Se marca como confirmada manualmente
+    setUbicacionConfirmada(true);
   }
 
-  // Tomar foto con la cámara
   async function tomarFoto() {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
       Alert.alert(
         "Permiso denegado",
-        "Necesitas dar permiso para usar la cámara.",
+        "Se requiere permiso de cámara para continuar.",
       );
       return;
     }
@@ -101,7 +105,6 @@ export default function FormularioCompleto() {
     }
   }
 
-  // Seleccionar de la galería
   async function seleccionarImagen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -114,12 +117,11 @@ export default function FormularioCompleto() {
     }
   }
 
-  // Enviar reporte
   async function enviarReporte() {
     if (!descripcion || !imagenUri || !coordenadas) {
       Alert.alert(
-        "Atención ⚠️",
-        "Es obligatorio definir la ubicación en el mapa, subir una foto y escribir una descripción.",
+        "Formulario incompleto ⚠️",
+        "Por favor adjunta una fotografía, verifica la posición en el mapa y añade una descripción.",
       );
       return;
     }
@@ -127,6 +129,7 @@ export default function FormularioCompleto() {
     setCargando(true);
 
     try {
+      // Conversión de imagen local a Blob
       const fotoResponse = await fetch(imagenUri);
       const blob = await fotoResponse.blob();
 
@@ -136,30 +139,36 @@ export default function FormularioCompleto() {
         .upload(nombreArchivo, blob, { contentType: "image/jpeg" });
 
       if (uploadError)
-        throw new Error("Error al subir foto: " + uploadError.message);
+        throw new Error("Error al subir archivo: " + uploadError.message);
 
       const { data: urlData } = supabase.storage
         .from("fugas")
         .getPublicUrl(nombreArchivo);
 
+      // Inserción en la tabla de Supabase con todos los requerimientos
       const { error: insertError } = await supabase.from("reportes").insert([
         {
           descripcion: descripcion,
           tipo: tipo,
           gravedad: gravedad,
+          estado: "Recibido",
           latitud: coordenadas.latitude,
           longitud: coordenadas.longitude,
+          ubicacion_confirmada: ubicacionConfirmada,
           imagen_url: urlData.publicUrl,
-          ubicacion_confirmada: true,
+          dispositivo_id: dispositivoId,
+          correo_ciudadano: correoCiudadano || null,
         },
       ]);
 
       if (insertError)
-        throw new Error("Error al guardar: " + insertError.message);
+        throw new Error("Error al registrar reporte: " + insertError.message);
 
-      Alert.alert("¡Éxito! ✅", "Reporte enviado correctamente.");
+      Alert.alert("¡Enviado con éxito! ✅", "Tu reporte ha sido registrado.");
 
+      // Limpieza del formulario
       setDescripcion("");
+      setCorreoCiudadano("");
       setImagenUri(null);
     } catch (err: any) {
       Alert.alert("Error ❌", err.message);
@@ -170,24 +179,19 @@ export default function FormularioCompleto() {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.titulo}>Reportar Fuga</Text>
+      <Text style={styles.titulo}>Reportar Fuga de Agua</Text>
 
-      {/* Indicador y botón para reintentar GPS */}
+      {/* GPS Status */}
       <View style={styles.headerUbicacion}>
         <Text style={styles.label}>
-          Ubicación:{" "}
-          {coordenadas ? "✅ Confirmada" : "⚠️ Selecciona en el mapa"}
+          Ubicación: {coordenadas ? "✅ Confirmada" : "⚠️ Selecciona un punto"}
         </Text>
-        <Button
-          title="🔄 Reintentar GPS"
-          onPress={obtenerUbicacion}
-          color="#0288d1"
-        />
+        <Button title="🔄 GPS" onPress={obtenerUbicacionGPS} color="#0288d1" />
       </View>
 
-      {/* MAPA INTERACTIVO */}
+      {/* Mapa interactivo */}
       <Text style={styles.sublabel}>
-        Toca en el mapa para ajustar el punto exacto:
+        Toca o arrastra el marcador para ajustar el lugar:
       </Text>
       <View style={styles.mapaContainer}>
         <MapView
@@ -211,8 +215,9 @@ export default function FormularioCompleto() {
       <View style={styles.pickerContainer}>
         <Picker selectedValue={tipo} onValueChange={(val) => setTipo(val)}>
           <Picker.Item label="Tubería en calzada" value="Tubería en calzada" />
-          <Picker.Item label="Medidor" value="Medidor" />
-          <Picker.Item label="Llave de paso" value="Llave de paso" />
+          <Picker.Item label="Boca de riego" value="Boca de riego" />
+          <Picker.Item label="Fuente pública" value="Fuente pública" />
+          <Picker.Item label="Alcantarilla" value="Alcantarilla" />
           <Picker.Item label="Otro" value="Otro" />
         </Picker>
       </View>
@@ -234,10 +239,21 @@ export default function FormularioCompleto() {
       <Text style={styles.label}>Descripción</Text>
       <TextInput
         style={styles.input}
-        placeholder="Ej: Fuga de agua frente al número 102..."
+        placeholder="Añade detalles sobre la fuga..."
         value={descripcion}
         onChangeText={setDescripcion}
         multiline
+      />
+
+      {/* Correo Opcional */}
+      <Text style={styles.label}>Correo electrónico (Opcional)</Text>
+      <TextInput
+        style={styles.inputEmail}
+        placeholder="ejemplo@correo.com"
+        value={correoCiudadano}
+        onChangeText={setCorreoCiudadano}
+        keyboardType="email-address"
+        autoCapitalize="none"
       />
 
       {/* Botones de Imagen */}
@@ -258,13 +274,13 @@ export default function FormularioCompleto() {
         <Image source={{ uri: imagenUri }} style={styles.imagenPreview} />
       )}
 
-      {/* Botón de envío */}
+      {/* Botón de Enviar */}
       <View style={styles.botonEspaciado}>
         {cargando ? (
-          <ActivityIndicator size="large" color="#0000ff" />
+          <ActivityIndicator size="large" color="#0288d1" />
         ) : (
           <Button
-            title="🚀 Enviar Reporte Completo"
+            title="🚀 Enviar Reporte"
             onPress={enviarReporte}
             color="#2e7d32"
           />
@@ -321,10 +337,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#ccc",
     borderRadius: 8,
-    padding: 15,
+    padding: 12,
     fontSize: 16,
-    minHeight: 80,
+    minHeight: 70,
     textAlignVertical: "top",
+    backgroundColor: "#f9f9f9",
+  },
+  inputEmail: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
     backgroundColor: "#f9f9f9",
   },
   pickerContainer: {
@@ -337,7 +361,7 @@ const styles = StyleSheet.create({
   botonesFotoContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 10,
+    marginTop: 15,
     marginBottom: 5,
   },
   mitadBoton: {
