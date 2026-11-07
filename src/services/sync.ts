@@ -23,7 +23,8 @@ export async function sincronizar(db: SQLiteDatabase) {
         if (error) throw error;
         path = p;
       }
-      // upsert por id: reintentar nunca crea duplicados
+
+      // Upsert a Supabase
       const { error } = await supabase.from("reportes").upsert(
         {
           id: r.id,
@@ -35,12 +36,17 @@ export async function sincronizar(db: SQLiteDatabase) {
           referencia: r.referencia,
           latitud: r.latitud,
           longitud: r.longitud,
+          ubicacion_confirmada: r.ubicacionConfirmada,
+          correo_ciudadano: r.correoCiudadano,
           foto_path: path,
+          motivo_descarte: r.motivoDescarte,
+          reporte_original_id: r.reporteOriginalId,
           creado_en: r.creadoEn,
           actualizado_en: r.actualizadoEn,
         },
         { onConflict: "id" }
       );
+
       if (error) throw error;
       await marcarEnviado(db, r.id, path);
       enviados++;
@@ -50,9 +56,10 @@ export async function sincronizar(db: SQLiteDatabase) {
     }
   }
 
-  // Descargar reportes del usuario (otro dispositivo / cambios de estado)
+  // Descargar reportes remotos actualizando TODOS los campos de la interfaz Reporte
   const { data: remotos, error } = await supabase.from("reportes").select("*");
   if (error) throw error;
+
   for (const x of remotos ?? []) {
     await guardarRemoto(db, {
       id: x.id,
@@ -60,17 +67,26 @@ export async function sincronizar(db: SQLiteDatabase) {
       tipo: x.tipo,
       gravedad: x.gravedad,
       estado: x.estado,
-      referencia: x.referencia,
-      latitud: x.latitud,
-      longitud: x.longitud,
+      referencia: x.referencia ?? "",
+      latitud: x.latitud ?? null,
+      longitud: x.longitud ?? null,
+      ubicacionConfirmada: x.ubicacion_confirmada ?? 0,
+      correoCiudadano: x.correo_ciudadano ?? null,
       fotoUri: null,
-      fotoPath: x.foto_path,
+      fotoPath: x.foto_path ?? null,
+      motivoDescarte: x.motivo_descarte ?? null,
+      reporteOriginalId: x.reporte_original_id ?? null,
+      fechaValidacion: x.fecha_validacion ?? null,
+      fechaInicioReparacion: x.fecha_inicio_reparacion ?? null,
+      fechaResolucion: x.fecha_resolucion ?? null,
+      observacionesPersonal: x.observaciones_personal ?? null,
       creadoEn: x.creado_en,
       actualizadoEn: x.actualizado_en,
       syncEstado: "enviado",
       syncError: null,
     });
   }
+
   return { enviados, errores, recibidos: remotos?.length ?? 0 };
 }
 
