@@ -1,8 +1,9 @@
 import * as SQLite from 'expo-sqlite';
 
-export type TipoFuga = 'tuberia_calzada' | 'boca_riego' | 'fuente_publica' | 'alcantarillado' | 'otro';
+export type Tipo = 'tuberia' | 'boca_riego' | 'fuente' | 'alcantarilla' | 'otro';
 export type Gravedad = 'goteo' | 'chorro' | 'inundacion'; 
-export type EstadoReporte = 'recibido' | 'validado' | 'en_reparacion' | 'resuelto' | 'duplicado' | 'descartado';
+export type EstadoProceso = 'pendiente' | 'en_revision' | 'resuelto';
+export type EstadoSync = 'pendiente_envio' |  'enviado' | 'error';
 
 export interface ReporteLocal {
   id?: number;
@@ -12,12 +13,12 @@ export interface ReporteLocal {
   fecha: string;
   hora: string;
   descripcion: string;
-  tipo_fuga: TipoFuga;
+  tipo_fuga: Tipo;
   gravedad: Gravedad;
   latitud: number;
   longitud: number;
   ubicacion_confirmada: number;
-  estado_actual: EstadoReporte;
+  estado_actual: EstadoProceso;
   motivo_descarte?: string;
   reporte_original_id?: string;
   synced: number;

@@ -35,9 +35,19 @@
       ],
       "expo-sqlite",
       "expo-status-bar",
-      "expo-font",
-      "expo-image",
-      "expo-web-browser"
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "WaterDrop necesita la c\u00e1mara para tomar la foto de la fuga.",
+          "photosPermission": "WaterDrop necesita tu galer\u00eda para elegir la foto de la fuga."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "WaterDrop usa tu ubicaci\u00f3n para marcar d\u00f3nde est\u00e1 la fuga."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
