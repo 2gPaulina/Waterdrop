@@ -7,6 +7,7 @@ export type EstadoSync = "pendiente_envio" | "enviado" | "error";
 
 export interface Reporte {
   id: string;
+  userId?: string | null;
   descripcion: string;
   tipo: Tipo;
   gravedad: Gravedad;

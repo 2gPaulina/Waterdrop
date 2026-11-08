@@ -43,3 +43,5 @@ npx expo install expo-blob
 Renderiza un mapa nativo donde el usuario puede verificar la ubicación obtenida por GPS o ajustar el punto exacto arrastrando el marcador.
 
 npx expo install react-native-maps
+
+

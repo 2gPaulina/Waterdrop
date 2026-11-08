@@ -1,7 +1,38 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 import { supabase } from "@/lib/supabase";
 import { guardarRemoto, marcarEnviado, marcarError, pendientes } from "@/db/database";
-import type { Reporte } from "@/types/reporte";
+import type { EstadoProceso, Gravedad, Reporte, Tipo } from "@/types/reporte";
+
+// ⚠️ Confirmar contra Supabase (consultas al final del mensaje)
+const BUCKET = "fugas";
+
+// La app usa ids internos; la nube usa enums con estas etiquetas
+const TIPO_REMOTO: Record<Tipo, string> = {
+  tuberia: "Tubería en calzada",
+  boca_riego: "Boca de riego",
+  fuente: "Fuente pública",
+  alcantarilla: "Alcantarilla",
+  otro: "Otro",
+};
+const GRAVEDAD_REMOTO: Record<Gravedad, string> = {
+  goteo: "Goteo",
+  chorro: "Chorro",
+  inundacion: "Inundación",
+};
+const ESTADO_REMOTO: Record<EstadoProceso, string> = {
+  recibido: "Recibido",
+  validado: "Validado",
+  en_reparacion: "En reparación",
+  resuelto: "Resuelto",
+  duplicado: "Duplicado",
+  descartado: "Descartado",
+};
+
+const invertir = <T extends string>(m: Record<T, string>) =>
+  Object.fromEntries(Object.entries(m).map(([k, v]) => [v, k])) as Record<string, T>;
+const TIPO_LOCAL = invertir(TIPO_REMOTO);
+const GRAVEDAD_LOCAL = invertir(GRAVEDAD_REMOTO);
+const ESTADO_LOCAL = invertir(ESTADO_REMOTO);
 
 export async function sincronizar(db: SQLiteDatabase) {
   const { data } = await supabase.auth.getSession();
@@ -18,37 +49,42 @@ export async function sincronizar(db: SQLiteDatabase) {
         const p = `${userId}/${r.id}.jpg`;
         const buf = await (await fetch(r.fotoUri)).arrayBuffer();
         const { error } = await supabase.storage
-          .from("fotos")
-          .upload(p, buf, { contentType: "image/jpeg", upsert: true });
-        if (error) throw error;
+          .from(BUCKET)
+          .upload(p, buf, { contentType: "image/jpeg" });
+        // Si un intento anterior ya la subió, se da por buena
+        const yaExiste = !!error && /already exists|duplicate/i.test(error.message);
+        if (error && !yaExiste) throw new Error(`[foto] ${error.message}`);
         path = p;
       }
 
-      // Upsert a Supabase
+      // 2) Ciudadano (el correo vive en la tabla ciudadanos)
+      const { error: cErr } = await supabase.from("ciudadanos").upsert(
+        r.correoCiudadano
+          ? { id: userId, correo_electronico: r.correoCiudadano }
+          : { id: userId },
+        { onConflict: "id" }
+      );
+      if (cErr) throw new Error(`[ciudadanos] ${cErr.message}`);
+
+      // 3) Reporte. No se manda estado ni campos del personal: los maneja la nube
       const { error } = await supabase.from("reportes").upsert(
         {
           id: r.id,
-          user_id: userId,
+          ciudadano_id: userId,
+          fotografia_url: path,
+          fecha_hora: r.creadoEn,
           descripcion: r.descripcion,
-          tipo: r.tipo,
-          gravedad: r.gravedad,
-          estado: r.estado,
-          referencia: r.referencia,
+          tipo: TIPO_REMOTO[r.tipo],
+          gravedad: GRAVEDAD_REMOTO[r.gravedad],
           latitud: r.latitud,
           longitud: r.longitud,
-          ubicacion_confirmada: r.ubicacionConfirmada,
-          correo_ciudadano: r.correoCiudadano,
-          foto_path: path,
-          motivo_descarte: r.motivoDescarte,
-          reporte_original_id: r.reporteOriginalId,
-          creado_en: r.creadoEn,
-          actualizado_en: r.actualizadoEn,
+          ubicacion_confirmada: r.ubicacionConfirmada === 1,
         },
         { onConflict: "id" }
       );
+      if (error) throw new Error(`[reportes] ${error.message}`);
 
-      if (error) throw error;
-      await marcarEnviado(db, r.id, path);
+      await marcarEnviado(db, r.id, path, userId);
       enviados++;
     } catch (e: any) {
       await marcarError(db, r.id, e?.message ?? "Error desconocido");
@@ -56,42 +92,45 @@ export async function sincronizar(db: SQLiteDatabase) {
     }
   }
 
-  // Descargar reportes remotos actualizando TODOS los campos de la interfaz Reporte
-  const { data: remotos, error } = await supabase.from("reportes").select("*");
+  // Descargar los reportes del ciudadano (cambios de estado hechos por el personal)
+  const { data: remotos, error } = await supabase
+    .from("reportes")
+    .select("*")
+    .eq("ciudadano_id", userId);
   if (error) throw error;
 
   for (const x of remotos ?? []) {
     await guardarRemoto(db, {
       id: x.id,
-      descripcion: x.descripcion,
-      tipo: x.tipo,
-      gravedad: x.gravedad,
-      estado: x.estado,
-      referencia: x.referencia ?? "",
-      latitud: x.latitud ?? null,
-      longitud: x.longitud ?? null,
-      ubicacionConfirmada: x.ubicacion_confirmada ?? 0,
-      correoCiudadano: x.correo_ciudadano ?? null,
+      userId: x.ciudadano_id,
+      descripcion: x.descripcion ?? "",
+      tipo: TIPO_LOCAL[x.tipo] ?? "otro",
+      gravedad: GRAVEDAD_LOCAL[x.gravedad] ?? "goteo",
+      estado: ESTADO_LOCAL[x.estado] ?? "recibido",
+      referencia: "",
+      latitud: x.latitud,
+      longitud: x.longitud,
+      ubicacionConfirmada: x.ubicacion_confirmada ? 1 : 0,
+      correoCiudadano: null,
       fotoUri: null,
-      fotoPath: x.foto_path ?? null,
+      fotoPath: x.fotografia_url,
       motivoDescarte: x.motivo_descarte ?? null,
       reporteOriginalId: x.reporte_original_id ?? null,
       fechaValidacion: x.fecha_validacion ?? null,
       fechaInicioReparacion: x.fecha_inicio_reparacion ?? null,
       fechaResolucion: x.fecha_resolucion ?? null,
       observacionesPersonal: x.observaciones_personal ?? null,
-      creadoEn: x.creado_en,
-      actualizadoEn: x.actualizado_en,
+      creadoEn: x.fecha_hora,
+      actualizadoEn: x.fecha_hora,
       syncEstado: "enviado",
       syncError: null,
     });
   }
-
   return { enviados, errores, recibidos: remotos?.length ?? 0 };
 }
 
 export async function urlFotoRemota(path: string) {
-  const { data } = await supabase.storage.from("fotos").createSignedUrl(path, 3600);
+  const { data } = await supabase.storage.from(BUCKET).createSignedUrl(path, 3600);
   return data?.signedUrl ?? null;
 }
 
@@ -99,6 +138,6 @@ export async function urlFotoRemota(path: string) {
 export async function eliminarRemoto(r: Reporte) {
   try {
     await supabase.from("reportes").delete().eq("id", r.id);
-    if (r.fotoPath) await supabase.storage.from("fotos").remove([r.fotoPath]);
+    if (r.fotoPath) await supabase.storage.from(BUCKET).remove([r.fotoPath]);
   } catch {}
 }
