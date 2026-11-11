@@ -44,4 +44,7 @@ Renderiza un mapa nativo donde el usuario puede verificar la ubicación obtenida
 
 npx expo install react-native-maps
 
+⚡ 7. Resolución de Dependencias del Proyecto
+Sincroniza y resuelve los conflictos de versiones entre librerías obsoletas o peer-dependencies heredadas al fusionar ramas en Expo y React Native.
 
+npm install --legacy-peer-deps
