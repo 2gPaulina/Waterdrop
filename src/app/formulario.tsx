@@ -19,8 +19,9 @@ export default function Formulario() {
   const [descripcion, setDescripcion] = useState("");
   const [tipo, setTipo] = useState<Tipo>("tuberia");
   const [gravedad, setGravedad] = useState<Gravedad>("goteo");
-  const [estado, setEstado] = useState<EstadoProceso>("pendiente");
-  const [referencia, setReferencia] = useState("");
+  const [estado, setEstado] = useState<EstadoProceso>("recibido");  const [referencia, setReferencia] = useState("");
+  const [correo, setCorreo] = useState("");
+  const [confirmada, setConfirmada] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [fotoUri, setFotoUri] = useState<string | null>(null);
   const [errores, setErrores] = useState<Record<string, string>>({});
@@ -33,6 +34,8 @@ export default function Formulario() {
       setOriginal(r);
       setDescripcion(r.descripcion); setTipo(r.tipo); setGravedad(r.gravedad); setEstado(r.estado);
       setReferencia(r.referencia); setFotoUri(r.fotoUri);
+      setCorreo(r.correoCiudadano ?? "");
+      setConfirmada(r.ubicacionConfirmada === 1);
       if (r.latitud != null && r.longitud != null) setCoords({ lat: r.latitud, lng: r.longitud });
     });
   }, [id, db]);
@@ -58,6 +61,7 @@ export default function Formulario() {
       }
       const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setCoords({ lat: p.coords.latitude, lng: p.coords.longitude });
+      setConfirmada(false);
     } catch {
       Alert.alert("Ubicación no disponible", "Escribe una referencia del lugar para continuar.");
     } finally {
@@ -70,6 +74,8 @@ export default function Formulario() {
     if (descripcion.trim().length < 10) e.descripcion = "Describe la fuga con al menos 10 caracteres.";
     if (referencia.trim().length < 3) e.referencia = "Escribe una referencia del lugar (calle, colonia).";
     if (!fotoUri && !original?.fotoPath) e.foto = "La fotografía es obligatoria.";
+    const c = correo.trim();
+    if (c && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c)) e.correo = "Escribe un correo válido.";
     setErrores(e);
     return Object.keys(e).length === 0;
   };
@@ -89,6 +95,14 @@ export default function Formulario() {
       referencia: referencia.trim(),
       latitud: coords?.lat ?? null,
       longitud: coords?.lng ?? null,
+      ubicacionConfirmada: coords && confirmada ? 1 : 0,
+      correoCiudadano: correo.trim() || null,
+      motivoDescarte: original?.motivoDescarte ?? null,
+      reporteOriginalId: original?.reporteOriginalId ?? null,
+      fechaValidacion: original?.fechaValidacion ?? null,
+      fechaInicioReparacion: original?.fechaInicioReparacion ?? null,
+      fechaResolucion: original?.fechaResolucion ?? null,
+      observacionesPersonal: original?.observacionesPersonal ?? null,
       fotoUri: uriFinal,
       fotoPath: cambioFoto ? null : original?.fotoPath ?? null, // si cambió la foto, se vuelve a subir
       creadoEn: original?.creadoEn ?? ahora,
@@ -96,10 +110,14 @@ export default function Formulario() {
       syncEstado: "pendiente_envio",
       syncError: null,
     };
-    if (original) await actualizarReporte(db, r); else await crearReporte(db, r);
-    Alert.alert("Listo", original ? "Reporte actualizado." : "Reporte guardado. Se enviará al sincronizar.", [
-      { text: "OK", onPress: () => router.back() },
-    ]);
+    try {
+      if (original) await actualizarReporte(db, r); else await crearReporte(db, r);
+      Alert.alert("Listo", original ? "Reporte actualizado." : "Reporte guardado. Se enviará al sincronizar.", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    } catch (e: any) {
+      Alert.alert("No se pudo guardar", e?.message ?? "Error desconocido");
+    }
   };
 
   return (
