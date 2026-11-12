@@ -1,59 +1,69 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 import type { CambioEstado, Reporte } from "@/types/reporte";
 
+export const NOMBRE_BD = "waterdrop_local.db";
+
+const MIGRACIONES: string[] = [
+  `
+  CREATE TABLE IF NOT EXISTS reportes (
+    id TEXT PRIMARY KEY NOT NULL,
+    ciudadano_id TEXT,
+    descripcion TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    gravedad TEXT NOT NULL,
+    estado TEXT NOT NULL DEFAULT 'recibido',
+    referencia TEXT NOT NULL DEFAULT '',
+    latitud REAL,
+    longitud REAL,
+    ubicacion_confirmada INTEGER NOT NULL DEFAULT 0,
+    correo_ciudadano TEXT,
+    foto_uri TEXT,
+    fotografia_url TEXT,
+    motivo_descarte TEXT,
+    reporte_original_id TEXT,
+    fecha_validacion TEXT,
+    fecha_inicio_reparacion TEXT,
+    fecha_resolucion TEXT,
+    observaciones_personal TEXT,
+    fecha_hora TEXT NOT NULL,
+    actualizado_en TEXT NOT NULL,
+    sync_estado TEXT NOT NULL DEFAULT 'pendiente_envio',
+    sync_error TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS historial_estados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reporte_id TEXT NOT NULL REFERENCES reportes(id) ON DELETE CASCADE,
+    estado_anterior TEXT,
+    nuevo_estado TEXT NOT NULL,
+    fecha_hora TEXT NOT NULL,
+    personal_id TEXT
+  );
+  `,
+  // v2: ejemplo para el futuro
+  // `ALTER TABLE reportes ADD COLUMN nueva_columna TEXT;`,
+];
+
 export async function initDb(db: SQLiteDatabase) {
-  // Si quedó una versión vieja de las tablas, se descartan para recrearlas
-  const necesarias: Record<string, string[]> = {
-    reportes: ["ciudadano_id", "fecha_hora", "fotografia_url", "actualizado_en", "sync_estado", "sync_error"],
-    historial_estados: ["reporte_id", "estado_anterior", "nuevo_estado", "fecha_hora", "personal_id"],
-  };
-  for (const [tabla, requeridas] of Object.entries(necesarias)) {
-    const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${tabla})`);
-    if (cols.length > 0 && !requeridas.every((c) => cols.some((x) => x.name === c))) {
-      await db.execAsync(`DROP TABLE ${tabla};`);
-    }
+  // SQLite trae las llaves foráneas apagadas; hay que activarlas en cada conexión
+  await db.execAsync("PRAGMA foreign_keys = ON;");
+
+  const fila = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
+  const versionActual = fila?.user_version ?? 0;
+
+  if (versionActual === 0) {
+    await db.execAsync("PRAGMA journal_mode = WAL;");
   }
 
-  await db.execAsync(`
-    PRAGMA journal_mode = WAL;
-
-    CREATE TABLE IF NOT EXISTS reportes (
-      id TEXT PRIMARY KEY NOT NULL,
-      ciudadano_id TEXT,
-      descripcion TEXT NOT NULL,
-      tipo TEXT NOT NULL,
-      gravedad TEXT NOT NULL,
-      estado TEXT NOT NULL DEFAULT 'recibido',
-      referencia TEXT NOT NULL DEFAULT '',
-      latitud REAL,
-      longitud REAL,
-      ubicacion_confirmada INTEGER NOT NULL DEFAULT 0,
-      correo_ciudadano TEXT,
-      foto_uri TEXT,
-      fotografia_url TEXT,
-      motivo_descarte TEXT,
-      reporte_original_id TEXT,
-      fecha_validacion TEXT,
-      fecha_inicio_reparacion TEXT,
-      fecha_resolucion TEXT,
-      observaciones_personal TEXT,
-      fecha_hora TEXT NOT NULL,
-      actualizado_en TEXT NOT NULL,
-      sync_estado TEXT NOT NULL DEFAULT 'pendiente_envio',
-      sync_error TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS historial_estados (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      reporte_id TEXT NOT NULL,
-      estado_anterior TEXT,
-      nuevo_estado TEXT NOT NULL,
-      fecha_hora TEXT NOT NULL,
-      personal_id TEXT
-    );
-  `);
+  for (let version = versionActual; version < MIGRACIONES.length; version++) {
+    await db.withTransactionAsync(async () => {
+      await db.execAsync(MIGRACIONES[version]);
+      await db.execAsync(`PRAGMA user_version = ${version + 1};`);
+    });
+  }
 }
 
+// Columnas de datos del reporte (sin las de sincronización)
 const COLS = [
   "id", "ciudadano_id", "descripcion", "tipo", "gravedad", "estado", "referencia",
   "latitud", "longitud", "ubicacion_confirmada", "correo_ciudadano",
@@ -70,6 +80,7 @@ const valores = (r: Reporte) => [
   r.observacionesPersonal ?? null, r.creadoEn, r.actualizadoEn ?? r.creadoEn,
 ];
 
+// Columnas con el nombre de Supabase; aquí se devuelven con los nombres que usa la app
 const SELECT_REPORTE = `
   id, ciudadano_id AS userId, descripcion, tipo, gravedad, estado, referencia,
   latitud, longitud, ubicacion_confirmada AS ubicacionConfirmada,
@@ -86,7 +97,7 @@ export const listarReportes = (db: SQLiteDatabase) =>
 export const obtenerReporte = (db: SQLiteDatabase, id: string) =>
   db.getFirstAsync<Reporte>(`SELECT ${SELECT_REPORTE} FROM reportes WHERE id = ?`, id);
 
-
+// "Reportes realizados por el ciudadano"
 export const reportesDeCiudadano = (db: SQLiteDatabase, ciudadanoId: string) =>
   db.getAllAsync<Reporte>(
     `SELECT ${SELECT_REPORTE} FROM reportes WHERE ciudadano_id = ? ORDER BY fecha_hora DESC`,
@@ -130,6 +141,7 @@ export async function crearReporte(db: SQLiteDatabase, r: Reporte) {
   await registrarCambio(db, r.id, null, r.estado, r.creadoEn);
 }
 
+// El ciudadano edita sus datos; el estado y las fechas de gestión los maneja el personal
 export async function actualizarReporte(db: SQLiteDatabase, r: Reporte) {
   await db.runAsync(
     `UPDATE reportes SET descripcion=?, tipo=?, gravedad=?, referencia=?, latitud=?, longitud=?,
@@ -160,7 +172,7 @@ export const marcarEnviado = (
 export const marcarError = (db: SQLiteDatabase, id: string, msg: string) =>
   db.runAsync("UPDATE reportes SET sync_estado='error', sync_error=? WHERE id=?", msg, id);
 
-
+/** Guarda lo que viene de Supabase. Si ya existe, refresca lo que maneja el personal. */
 export async function guardarRemoto(db: SQLiteDatabase, r: Reporte) {
   const previo = await db.getFirstAsync<{ estado: string; sync_estado: string }>(
     "SELECT estado, sync_estado FROM reportes WHERE id = ?", r.id
@@ -183,6 +195,7 @@ export async function guardarRemoto(db: SQLiteDatabase, r: Reporte) {
     ...valores(r)
   );
 
+  // Si el personal cambió el estado en la nube, queda anotado en el historial
   if (!previo) {
     await registrarCambio(db, r.id, null, r.estado, r.creadoEn);
   } else if (previo.sync_estado === "enviado" && previo.estado !== r.estado) {

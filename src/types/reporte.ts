@@ -7,7 +7,7 @@ export type EstadoSync = "pendiente_envio" | "enviado" | "error";
 
 export interface Reporte {
   id: string;
-  userId?: string | null;
+  userId?: string | null; // ciudadano_id en Supabase
   descripcion: string;
   tipo: Tipo;
   gravedad: Gravedad;

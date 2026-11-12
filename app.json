@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "waterdrop",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -38,8 +38,8 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "WaterDrop necesita la c\u00e1mara para tomar la foto de la fuga.",
-          "photosPermission": "WaterDrop necesita tu galer\u00eda para elegir la foto de la fuga."
+          "photosPermission": "Permite seleccionar imágenes de la galería.",
+          "cameraPermission": "Permite tomar fotos de la fuga directamente con la cámara."
         }
       ],
       [

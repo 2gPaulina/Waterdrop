@@ -26,9 +26,12 @@ import {
   type Gravedad,
   type Reporte,
 } from "@/types/reporte";
+import { cerrarSesion } from "@/auth/acciones";
+import NetInfo from '@react-native-community/netinfo';
 
 type Errores = {
   descripcion?: string;
+  referencia?: string;
   correo?: string;
   foto?: string;
   ubicacion?: string;
@@ -63,8 +66,33 @@ export default function FormularioReporte() {
   const [cargando, setCargando] = useState(false);
 
   useEffect(() => {
-    obtenerUbicacionGPS();
-  }, []);
+  const intentarSincronizar = async () => {
+    try {
+      await sincronizar(db);
+    } catch {
+      // Manejo silencioso en segundo plano
+    }
+  };
+
+  // 1) Intentar sincronizar al entrar a la pantalla
+  intentarSincronizar();
+
+  // 2) Listener de red: en cuanto el celular detecte internet, sube DE INMEDIATO
+  const unsubscribeNetInfo = NetInfo.addEventListener((state) => {
+    if (state.isConnected && state.isInternetReachable) {
+      intentarSincronizar();
+    }
+  });
+
+  // 3) Temporizador periódicos cada 15 minutos (900,000 ms) como respaldo
+  const MINUTOS_15 = 15 * 60 * 1000;
+  const intervaloId = setInterval(intentarSincronizar, MINUTOS_15);
+
+  return () => {
+    unsubscribeNetInfo();
+    clearInterval(intervaloId);
+    };
+  }, [db]);
 
   async function obtenerUbicacionGPS() {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -93,6 +121,23 @@ export default function FormularioReporte() {
     setUbicacionConfirmada(false);
   }
 
+  const handleCerrarSesion = async () => {
+  Alert.alert("Cerrar Sesión", "¿Estás seguro de que deseas salir?", [
+    { text: "Cancelar", style: "cancel" },
+    {
+      text: "Salir",
+      style: "destructive",
+      onPress: async () => {
+        try {
+          await cerrarSesion();
+        } catch (error: any) {
+          Alert.alert("Error", error?.message ?? "No se pudo cerrar la sesión.");
+        }
+      },
+    },
+  ]);
+};
+
   // Tocar o arrastrar el pin cuenta como confirmación del ciudadano
   function seleccionarEnMapa(e: any) {
     setCoordenadas(e.nativeEvent.coordinate);
@@ -116,15 +161,36 @@ export default function FormularioReporte() {
   function validar(): boolean {
     const e: Errores = {};
 
-    if (descripcion.trim().length < 10) {
+    // Detecta 4 o más caracteres idénticos consecutivos (ej. ssss, dddd)
+    const letrasBasura = /(.)\1{3,}/i;
+    // Valida que contenga palabras normales con o sin acentos
+    const tienePalabrasValidas = /[a-zA-ZáéíóúÁÉÍÓÚñÑ]{3,}/;
+
+    // 1. Descripción
+    const desc = descripcion.trim();
+    if (desc.length < 10) {
       e.descripcion = "Describe la fuga con al menos 10 caracteres.";
+    } else if (letrasBasura.test(desc) || !tienePalabrasValidas.test(desc)) {
+      e.descripcion = "Por favor ingresa una descripción válida en texto comprensible.";
     }
 
+    // 2. Referencia (Opcional)
+    const ref = referencia.trim();
+    if (ref.length > 0) {
+      if (ref.length < 3) {
+        e.referencia = "La referencia debe tener al menos 3 caracteres.";
+      } else if (letrasBasura.test(ref) || !tienePalabrasValidas.test(ref)) {
+        e.referencia = "Ingresa una referencia válida (ej. entre qué calles o colonia).";
+      }
+    }
+
+    // 3. Correo (Opcional)
     const correo = correoCiudadano.trim();
     if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
-      e.correo = "Escribe un correo válido (ejemplo@correo.com).";
+      e.correo = "Ingresa un correo electrónico válido (ejemplo@dominio.com).";
     }
 
+    // 4. Ubicación y Foto
     if (!imagenUri) e.foto = "Adjunta una fotografía de la fuga.";
 
     if (!coordenadas) {

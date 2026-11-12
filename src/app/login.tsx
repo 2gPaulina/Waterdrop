@@ -1,51 +1,107 @@
-import { useState } from "react";
-import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
-import { useRouter } from "expo-router";
-import { Boton } from "@/components/Boton";
-import { supabase } from "@/lib/supabase";
+import { Link } from 'expo-router';
+import { useState } from 'react';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-export default function Login() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+import { iniciarSesion } from '@/auth/acciones';
+import { BotonPrincipal, CampoTexto, MensajeError } from '@/components/formulario';
+import { AZUL, GRIS } from '@/constants/colores';
+
+export default function LoginScreen() {
+  const [correo, setCorreo] = useState('');
+  const [contrasena, setContrasena] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
 
-  const valido = () => {
-    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { Alert.alert("Correo inválido", "Escribe un correo válido."); return false; }
-    if (password.length < 6) { Alert.alert("Contraseña corta", "Mínimo 6 caracteres."); return false; }
-    return true;
-  };
-
-  const entrar = async () => {
-    if (!valido()) return;
+  async function entrar() {
+    if (!correo.trim() || !contrasena) {
+      setError('Escribe tu correo y tu contraseña.');
+      return;
+    }
+    setError(null);
     setCargando(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    setCargando(false);
-    if (error) Alert.alert("No se pudo entrar", error.message); else router.back();
-  };
-
-  const registrar = async () => {
-    if (!valido()) return;
-    setCargando(true);
-    const { data, error } = await supabase.auth.signUp({ email: email.trim(), password });
-    setCargando(false);
-    if (error) return Alert.alert("No se pudo crear la cuenta", error.message);
-    if (!data.session) Alert.alert("Revisa tu correo", "Confirma tu cuenta y luego inicia sesión.");
-    else router.back();
-  };
+    try {
+      // Al haber sesión, el layout raíz manda a las pestañas por sí solo.
+      await iniciarSesion(correo, contrasena);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCargando(false);
+    }
+  }
 
   return (
-    <View style={s.cont}>
-      <Text style={s.t}>Inicia sesión para sincronizar tus reportes</Text>
-      <TextInput style={s.input} placeholder="Correo" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
-      <TextInput style={s.input} placeholder="Contraseña" secureTextEntry value={password} onChangeText={setPassword} />
-      <Boton titulo="Entrar" cargando={cargando} onPress={entrar} />
-      <Boton titulo="Crear cuenta" secundario onPress={registrar} />
-    </View>
+    <KeyboardAvoidingView
+      style={styles.pantalla}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.contenedor} keyboardShouldPersistTaps="handled">
+        <View style={styles.encabezado}>
+          <Text style={styles.titulo}>WaterDrop</Text>
+          <Text style={styles.subtitulo}>Reporta fugas de agua en Pachuca</Text>
+        </View>
+
+        <CampoTexto
+          etiqueta="Correo"
+          value={correo}
+          onChangeText={setCorreo}
+          placeholder="tucorreo@ejemplo.com"
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoComplete="email"
+          textContentType="emailAddress"
+        />
+        <CampoTexto
+          etiqueta="Contraseña"
+          value={contrasena}
+          onChangeText={setContrasena}
+          placeholder="Tu contraseña"
+          secureTextEntry
+          autoComplete="current-password"
+          textContentType="password"
+          onSubmitEditing={entrar}
+        />
+
+        <MensajeError texto={error} />
+        <BotonPrincipal texto="Iniciar sesión" onPress={entrar} cargando={cargando} />
+
+        <Link href="/registro" style={styles.enlace}>
+          ¿No tienes cuenta? <Text style={styles.enlaceResaltado}>Regístrate</Text>
+        </Link>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
-const s = StyleSheet.create({
-  cont: { flex: 1, padding: 24, gap: 12, justifyContent: "center", backgroundColor: "#f0f9ff" },
-  t: { fontSize: 18, fontWeight: "700", textAlign: "center" },
-  input: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 10, padding: 12 },
+
+const styles = StyleSheet.create({
+  pantalla: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
+  contenedor: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 24,
+    gap: 16,
+  },
+  encabezado: {
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 16,
+  },
+  titulo: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: AZUL,
+  },
+  subtitulo: {
+    color: GRIS,
+  },
+  enlace: {
+    padding: 8,
+    textAlign: 'center',
+    color: GRIS,
+  },
+  enlaceResaltado: {
+    color: AZUL,
+    fontWeight: '600',
+  },
 });

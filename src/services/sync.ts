@@ -2,8 +2,8 @@ import type { SQLiteDatabase } from "expo-sqlite";
 import { supabase } from "@/lib/supabase";
 import { guardarRemoto, marcarEnviado, marcarError, pendientes } from "@/db/database";
 import type { EstadoProceso, Gravedad, Reporte, Tipo } from "@/types/reporte";
+import NetInfo from '@react-native-community/netinfo';
 
-// ⚠️ Confirmar contra Supabase (consultas al final del mensaje)
 const BUCKET = "fugas";
 
 // La app usa ids internos; la nube usa enums con estas etiquetas
@@ -35,6 +35,13 @@ const GRAVEDAD_LOCAL = invertir(GRAVEDAD_REMOTO);
 const ESTADO_LOCAL = invertir(ESTADO_REMOTO);
 
 export async function sincronizar(db: SQLiteDatabase) {
+  // 0) Comprobar red ANTES de intentar cualquier operación remota
+  const netState = await NetInfo.fetch();
+  if (!netState.isConnected || !netState.isInternetReachable) {
+    // Sin conexión no ejecutamos sync ni marcamos error en la BD local
+    return { enviados: 0, errores: 0, recibidos: 0 };
+  }
+
   const { data } = await supabase.auth.getSession();
   const userId = data.session?.user.id;
   if (!userId) throw new Error("SIN_SESION");
@@ -44,6 +51,7 @@ export async function sincronizar(db: SQLiteDatabase) {
 
   for (const r of await pendientes(db)) {
     try {
+      // 1) Foto al bucket, dentro de la carpeta del usuario
       let path = r.fotoPath;
       if (r.fotoUri && !path) {
         const p = `${userId}/${r.id}.jpg`;
@@ -72,6 +80,9 @@ export async function sincronizar(db: SQLiteDatabase) {
           id: r.id,
           ciudadano_id: userId,
           fotografia_url: path,
+          imagen_url: path
+            ? supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
+            : null,
           fecha_hora: r.creadoEn,
           descripcion: r.descripcion,
           tipo: TIPO_REMOTO[r.tipo],
@@ -87,6 +98,7 @@ export async function sincronizar(db: SQLiteDatabase) {
       await marcarEnviado(db, r.id, path, userId);
       enviados++;
     } catch (e: any) {
+      console.log("SYNC ERROR", r.id, e?.message);
       await marcarError(db, r.id, e?.message ?? "Error desconocido");
       errores++;
     }
@@ -129,9 +141,9 @@ export async function sincronizar(db: SQLiteDatabase) {
   return { enviados, errores, recibidos: remotos?.length ?? 0 };
 }
 
+// El bucket es público, así que la URL se arma directamente
 export async function urlFotoRemota(path: string) {
-  const { data } = await supabase.storage.from(BUCKET).createSignedUrl(path, 3600);
-  return data?.signedUrl ?? null;
+  return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
 /** Borrado remoto "mejor esfuerzo" (si no hay internet, solo se borra local). */
